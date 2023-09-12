@@ -1,5 +1,5 @@
-import { StatusBar } from "expo-status-bar";
-import { useState } from "react";
+import { Platform, StatusBar } from "react-native";
+import { useEffect, useState } from "react";
 import {
   Button,
   FlatList,
@@ -8,24 +8,47 @@ import {
   TextInput,
   View,
 } from "react-native";
-
-interface Task {
-  title: string;
-  time: string;
-  isRunning: boolean;
-  startTime?: number;
-  intervalId?: any;
-  endTime?: number;
-}
+import ptBR from "date-fns/locale/pt-BR";
+import { format, addSeconds } from "date-fns";
+import { utcToZonedTime } from "date-fns-tz";
+import { Task } from "./models/task";
+import TaskItem from "./components/TaskItem";
+import { Database } from "./models/database";
+import { Template } from "./models/template";
+import RNPickerSelect from "react-native-picker-select";
 
 export default function App() {
+  const database = new Database();
+
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [templates, setTemplates] = useState<Template[]>([]);
   const [currentTask, setCurrentTask] = useState("");
   const [isIdle, setIsIdle] = useState(true);
+  const [currentDateTime, setCurrentDateTime] = useState(new Date());
+  const [newTemplateTitle, setNewTemplateTitle] = useState<string>("");
 
-  // useEffect(() => {
-  //   loadAlarmSound();
-  // }, []);
+  const fillInitialData = async () => {
+    const storedTemplates = await database.queryTemplates();
+    setTemplates(storedTemplates);
+    console.log(storedTemplates);
+  };
+
+  // ok
+  useEffect(() => {
+    // loadAlarmSound();
+    const intervalId = setInterval(() => {
+      const brazilTimeZone = "America/Sao_Paulo";
+      const zonedTime = utcToZonedTime(new Date(), brazilTimeZone);
+      setCurrentDateTime(zonedTime);
+      // console.log(tasks);
+    }, 1000);
+
+    fillInitialData();
+
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, []);
 
   // const loadAlarmSound = async () => {
   //   try {
@@ -35,51 +58,69 @@ export default function App() {
   //   }
   // };
 
+  const handleIdleTimer = () => {
+    // if (!tasks.some((task) => task.isRunning)) {
+    //   setIsIdle(true);
+    //   clearInterval(idleInterval);
+    // } else {
+    //   setIsIdle(false);
+    //   idleInterval = setInterval(handleIdleTimer, 1000);
+    // }
+  };
+
+  useEffect(() => {
+    handleIdleTimer();
+    return () => {
+      // clearInterval(idleInterval);
+    };
+  }, [tasks]);
+
   const handleAddTask = () => {
     if (currentTask) {
       setTasks([
         ...tasks,
-        { title: currentTask, time: "00:00:00", isRunning: false },
+        {
+          id: new Date().getTime(),
+          title: currentTask,
+          time: "00:30:00",
+          isRunning: false,
+        },
       ]);
       setCurrentTask("");
     }
   };
 
-  const handleDeleteTask = (index: number) => {
+  const onDeleteTask = (taskId: number) => {
     const updatedTasks = [...tasks];
-    updatedTasks.splice(index, 1);
-    setTasks(updatedTasks);
+    const taskIndex = updatedTasks.findIndex((t) => t.id == taskId);
+    if (taskId >= 0) {
+      updatedTasks.splice(taskIndex, 1);
+      setTasks(updatedTasks);
+    }
   };
 
-  const handlePlayPauseTask = (index: number) => {
+  const onTaskUpdate = (task: Task) => {
     const updatedTasks = [...tasks];
 
-    updatedTasks.forEach((task, i) => {
-      if (i === index) {
-        if (!task.isRunning) {
-          task.isRunning = true;
-          task.endTime = new Date().getTime() + parseTime(task.time);
-          task.intervalId = setInterval(() => {
-            const currentTime = new Date().getTime();
-            if (currentTime >= (task.endTime || 0)) {
-              handleTaskCompletion(i);
-            } else {
-              const remainingTime = (task.endTime || 0) - currentTime;
-              task.time = formatTime(remainingTime);
-            }
-          }, 1000);
-        } else {
-          clearInterval(task.intervalId);
-          task.isRunning = false;
-        }
+    for (const t of updatedTasks) {
+      if (t.id == task.id) {
       } else {
-        clearInterval(task.intervalId);
-        task.isRunning = false;
+        t.isRunning = false;
       }
-    });
-
-    setIsIdle(false);
+      if (t.id == task.id) {
+        t.isRunning = task.isRunning;
+        t.title = task.title;
+        t.time = task.time;
+        t.intervalId = task.intervalId;
+      } else if (task.isRunning) {
+        t.isRunning = false;
+      }
+    }
+    console.log(updatedTasks);
     setTasks(updatedTasks);
+    console.log("onTaskUpdate", updatedTasks);
+
+    setIsIdle(!updatedTasks.some((t) => t.isRunning));
   };
 
   const parseTime = (time: string) => {
@@ -87,19 +128,8 @@ export default function App() {
     return (hours * 3600 + minutes * 60 + seconds) * 1000;
   };
 
-  const formatTime = (milliseconds: number) => {
-    const seconds = Math.floor(milliseconds / 1000);
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const remainingSeconds = seconds % 60;
-
-    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(
-      2,
-      "0"
-    )}:${String(remainingSeconds).padStart(2, "0")}`;
-  };
-
   const handleTaskCompletion = (index: number) => {
+    console.log("handleTaskCompletion", index);
     const updatedTasks = [...tasks];
     updatedTasks.splice(index, 1);
     setTasks(updatedTasks);
@@ -115,42 +145,184 @@ export default function App() {
   //   }
   // };
 
+  const calculateEstimatedCompletionTime = () => {
+    try {
+      const currentTime = new Date().getTime();
+      let totalRemainingTime = 0;
+
+      tasks.forEach((task) => {
+        totalRemainingTime +=
+          new Date().getTime() + parseTime(task.time) - currentTime;
+      });
+
+      const estimatedCompletionTime = addSeconds(
+        new Date(),
+        Math.round(totalRemainingTime / 1000)
+      );
+      const brazilTimeZone = "America/Sao_Paulo";
+      const zonedTime = utcToZonedTime(estimatedCompletionTime, brazilTimeZone);
+
+      return format(zonedTime, "dd/MM/yyyy HH:mm", {
+        locale: ptBR,
+      });
+    } catch (error: any) {
+      return `error: ${error.message || error.error}`;
+    }
+  };
+
+  const handleAddTemplate = async () => {
+    if (newTemplateTitle && tasks?.length) {
+      const template = await database.insertTemplate({
+        id: 0,
+        title: newTemplateTitle,
+      });
+      for (const task of tasks) {
+        task.templateId = template.id;
+        await database.insertTask(task);
+      }
+      setTemplates([...templates, template]);
+      setNewTemplateTitle("");
+      setTasks(tasks);
+    }
+  };
+
+  const handleLoadTemplate = async (templateId: number) => {
+    if (templateId) {
+      for (let i = 0; i <= 99999; i++) {
+        clearInterval(i);
+      }
+      const storedTasks = await database.queryTasks(templateId);
+      console.log(storedTasks);
+      setTasks(storedTasks);
+    }
+  };
+
   return (
-    <View>
-      <Text>Add Task</Text>
-      <TextInput
-        value={currentTask}
-        onChangeText={(text) => setCurrentTask(text)}
-        placeholder="Enter task name"
-      />
-      <Button title="Add" onPress={handleAddTask} />
-      <Text>Tasks</Text>
-      <FlatList
-        data={tasks}
-        keyExtractor={(item, index) => index.toString()}
-        renderItem={({ item, index }) => (
-          <View>
-            <Text>{item.title}</Text>
-            <TextInput
-              value={item.time}
-              onChangeText={(text) => {
-                if (!item.isRunning) {
-                  const updatedTasks = [...tasks];
-                  updatedTasks[index].time = text;
-                  setTasks(updatedTasks);
-                }
+    <View
+      style={[
+        styles.container,
+        {
+          paddingTop: Platform.OS === "android" ? StatusBar.currentHeight : 30,
+        },
+      ]}
+    >
+      <View style={{ flex: 1 }}>
+        <Text
+          style={{
+            fontSize: 30,
+            fontWeight: "900",
+            alignSelf: "center",
+            marginBottom: 30,
+            color: "#820263",
+          }}
+        >
+          MCBMAX Task timer
+        </Text>
+        <Text>Hora atual:</Text>
+        <Text
+          style={{
+            fontSize: 20,
+            fontWeight: "900",
+            marginBottom: 10,
+          }}
+        >
+          {format(currentDateTime, "dd/MM/yyyy HH:mm", { locale: ptBR })}
+        </Text>
+        <Text>Tarefa:</Text>
+        <View style={{ flexDirection: "row", marginBottom: 15 }}>
+          <TextInput
+            style={{
+              flexGrow: 1,
+              borderWidth: 1,
+              padding: 4,
+              marginRight: 10,
+              borderRadius: 5,
+            }}
+            maxLength={50}
+            multiline
+            value={currentTask}
+            onChangeText={(text) => setCurrentTask(text)}
+            placeholder="Escreva a tarefa..."
+          />
+          <Button title="+" onPress={handleAddTask} />
+        </View>
+        <View style={{ flexDirection: "row", marginBottom: 15 }}>
+          <View style={{ flexGrow: 1, gap: 2 }}>
+            <RNPickerSelect
+              style={{
+                inputWeb: {
+                  height: 35,
+                  marginRight: 5,
+                  borderColor: "#000",
+                  borderRadius: 5,
+                },
               }}
-              editable={!item.isRunning}
+              placeholder={{
+                label: "Carregar Modelo...",
+                value: 0,
+                color: "#9EA0A4",
+              }}
+              items={templates.map((t) => ({ value: t.id, label: t.title }))}
+              onValueChange={(value) => handleLoadTemplate(value)}
             />
-            <Button
-              title={item.isRunning ? "Pause" : "Play"}
-              onPress={() => handlePlayPauseTask(index)}
-            />
-            <Button title="Delete" onPress={() => handleDeleteTask(index)} />
           </View>
+          <View style={{ flexDirection: "row", flexGrow: 1 }}>
+            <TextInput
+              style={{
+                flexGrow: 1,
+                borderWidth: 1,
+                padding: 4,
+                marginRight: 10,
+                borderRadius: 5,
+              }}
+              maxLength={20}
+              value={newTemplateTitle}
+              onChangeText={(text) => setNewTemplateTitle(text)}
+              placeholder="Nome do modelo..."
+            />
+            <Button title="Salvar modelo" onPress={handleAddTemplate} />
+          </View>
+        </View>
+        <Text
+          style={{
+            fontWeight: "900",
+            marginBottom: 15,
+            fontSize: 20,
+            borderBottomColor: "silver",
+            borderBottomWidth: 1,
+          }}
+        >
+          Tarefas
+        </Text>
+        {tasks?.length ? (
+          <FlatList
+            style={{ marginBottom: 15 }}
+            data={tasks}
+            keyExtractor={(item) => item.id.toString()}
+            renderItem={({ item, index }) => (
+              <TaskItem
+                data={item}
+                onDelete={(taskId) => onDeleteTask(taskId)}
+                onUpdate={(t) => onTaskUpdate(t)}
+              />
+            )}
+          />
+        ) : (
+          <Text>Nenhum tarefa listada</Text>
         )}
-      />
-      {isIdle && <Text>No tasks in progress.</Text>}
+      </View>
+      <View style={{ marginBottom: 10 }}>
+        {isIdle && <Text>Nenhuma tarefa rodando.</Text>}
+        <Text>Término Previsto:</Text>
+        <Text
+          style={{
+            fontSize: 20,
+            fontWeight: "900",
+          }}
+        >
+          {calculateEstimatedCompletionTime()}
+        </Text>
+      </View>
     </View>
   );
 }
@@ -158,8 +330,11 @@ export default function App() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
-    alignItems: "center",
-    justifyContent: "center",
+    paddingLeft: 15,
+    paddingRight: 15,
+    maxWidth: 1000,
+    marginRight: "auto",
+    marginLeft: "auto",
+    width: "100%",
   },
 });
