@@ -17,6 +17,12 @@ import { Database } from "./models/database";
 import { Template } from "./models/template";
 import RNPickerSelect from "react-native-picker-select";
 
+// Task-Timer
+// ----------
+// TODO: Ao terminar o tempo, deve tirar a tarefa
+// TODO: Aumentar o espaço da tarefa (texto)
+// TODO: publicar novamente
+
 export default function App() {
   const database = new Database();
 
